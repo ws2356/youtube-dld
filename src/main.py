@@ -31,7 +31,7 @@ def thread_target(ch, method, properties, body):
         elif d['status'] == 'error':
             print('Failed downloading: %s' % d)
             ch.basic_nack(delivery_tag = method.delivery_tag)
-        else:
+        elif d['status'] != 'downloading':
             print('Other event: %s' % d)
 
     print(" [x] Received %r" % body)
@@ -67,6 +67,6 @@ def callback(ch, method, properties, body):
     th.start()
 
 channel.basic_consume(queue = 'job', auto_ack = False, on_message_callback = callback)
-channel.basic_qos(prefetch_count=1)
+channel.basic_qos(prefetch_count=3)
 print(' [*] Waiting for messages. To exit press CTRL+C')
 channel.start_consuming()
