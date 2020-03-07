@@ -4,6 +4,7 @@ import pika
 import youtube_dl
 import json
 import threading
+import signal
 
 os.chdir('/app/lib')
 
@@ -15,7 +16,11 @@ connection = pika.BlockingConnection(parameters = pika.ConnectionParameters(host
 channel = connection.channel()
 channel.queue_declare(queue = 'job', durable = True)
 
-def thread_target(ch, method, properties, body):
+
+msg_table = {}
+mutex = threading.RLock()
+
+def thread_target(ch, method, properties, json_body):
     class MyLogger(object):
         def debug(self, msg):
             pass
@@ -27,15 +32,26 @@ def thread_target(ch, method, properties, body):
     def my_hook(d):
         if d['status'] == 'finished':
             print('Done downloading, now converting ...')
-            ch.basic_ack(delivery_tag = method.delivery_tag)
+            try:
+                ch.basic_ack(delivery_tag = method.delivery_tag)
+            except BaseException as e:
+                print('Failed to basic_ack, e: %s' % e)
+            finally:
+                with mutex:
+                    msg_table.pop(message_key(json_body), None)
         elif d['status'] == 'error':
             print('Failed downloading: %s' % d)
-            ch.basic_nack(delivery_tag = method.delivery_tag)
+            try:
+                ch.basic_nack(delivery_tag = method.delivery_tag)
+            except BaseException as e:
+                print('Failed to basic_nack, e: %s' % e)
+            finally:
+                with mutex:
+                    msg_table.pop(message_key(json_body), None)
         elif d['status'] != 'downloading':
             print('Other event: %s' % d)
 
-    print(" [x] Received %r" % body)
-    json_body = json.loads(body)
+    print(" [x] Received %r" % json_body)
     ydl_opts = {
             'verbose': True,
             'logger': MyLogger(),
@@ -60,11 +76,51 @@ def thread_target(ch, method, properties, body):
         ydl.download([json_body['url']])
     except BaseException as e:
         print("Download failed error: %s" % e)
-        ch.basic_nack(delivery_tag = method.delivery_tag)
+        try:
+            ch.basic_nack(delivery_tag = method.delivery_tag)
+        except BaseException as e:
+            print("Failed to basic_nack, e: %s" % e)
+        finally:
+            with mutex:
+                msg_table.pop(message_key(json_body), None)
+
 
 def callback(ch, method, properties, body):
-    th = threading.Thread(target = thread_target, args = (ch, method, properties, body))
-    th.start()
+    json_body = json.loads(body)
+    handle_message(ch, method, properties, json_body)
+
+
+# message management
+def message_key(msg):
+    if msg is None:
+        return None
+    if msg.get('url') is None:
+        return None
+    return '%s:%s' % (msg['url'], msg.get('matchtitle', '-'))
+
+def handle_message(ch, method, properties, json_body):
+    msg_key = message_key(json_body)
+    if msg_key is None:
+        return
+    with mutex:
+        if msg_table.get(msg_key) is not None:
+            return
+        msg_table[msg_key] = method
+        th = threading.Thread(target = thread_target, args = (ch, method, properties, json_body))
+        th.start()
+
+
+def exit_gracefully(self, signum, frame):
+    with mutex:
+        for k, v in msg_table.items():
+            try:
+                channel.basic_nack(delivery_tag = v.delivery_tag)
+            except BaseException as e:
+                print('Failed to basic_nack, e: %s' % e)
+
+
+signal.signal(signal.SIGINT, exit_gracefully)
+signal.signal(signal.SIGTERM, exit_gracefully)
 
 channel.basic_consume(queue = 'job', auto_ack = False, on_message_callback = callback)
 channel.basic_qos(prefetch_count=3)
