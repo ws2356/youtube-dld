@@ -5,6 +5,8 @@ import youtube_dl
 import json
 import threading
 
+os.chdir('/app/lib')
+
 rabbitmq_addr = os.environ['rabbitmq_addr']
 if rabbitmq_addr is None:
     raise 'missing environ rabbitmq_addr'
@@ -35,20 +37,28 @@ def thread_target(ch, method, properties, body):
     print(" [x] Received %r" % body)
     json_body = json.loads(body)
     ydl_opts = {
+            'verbose': True,
             'logger': MyLogger(),
             'progress_hooks': [my_hook],
             'nocheckcertificate': True,
+            'noplaylist': True,
+            'prefer_ffmpeg': True,
+            'ffmpeg_location': '/host/usr/bin',
+            'cachedir': '/app/lib/cache',
+            'cookiefile': '/app/lib/cookiefile',
+            'download_archive': '/app/lib/download_archive',
             'sleep_interval': 1,
             'max_sleep_interval': 10
             }
     if os.environ.get('proxy') is not None:
         ydl_opts['proxy'] = os.environ['proxy']
+    print('ydl_opts: %s' % ydl_opts)
     ydl_opts.update(json_body)
 
     try:
         ydl = youtube_dl.YoutubeDL(params = ydl_opts)
         ydl.download([json_body['url']])
-    except e:
+    except BaseException as e:
         print("Download failed error: %s" % e)
         ch.basic_nack(delivery_tag = method.delivery_tag)
 
