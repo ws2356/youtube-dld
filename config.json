@@ -1,0 +1,5 @@
+{
+  "report_unit": 1048576,
+  "prefetch_count": 1,
+  "retry_wait": 5
+}

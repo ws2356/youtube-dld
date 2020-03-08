@@ -28,26 +28,26 @@ def thread_target(ch, delivery_tag, properties, json_body):
         def warning(self, msg):
             pass
         def error(self, msg):
-            print(msg)
+            print(msg, flush = True)
 
     last_progress = 0
     def my_hook(d):
         nonlocal last_progress
         if d['status'] == 'finished':
-            print('Done downloading, now converting ...')
+            print('Done downloading, now converting ...', flush = True)
             try:
                 ch.basic_ack(delivery_tag = delivery_tag)
             except BaseException as e:
-                print('Failed to basic_ack, e: %s' % e)
+                print('Failed to basic_ack, e: %s' % e, flush = True)
             finally:
                 with mutex:
                     msg_table.pop(message_key(json_body), None)
         elif d['status'] == 'error':
-            print('Failed downloading: %s' % d)
+            print('Failed downloading: %s' % d, True)
             try:
                 ch.basic_nack(delivery_tag = delivery_tag)
             except BaseException as e:
-                print('Failed to basic_nack, e: %s' % e)
+                print('Failed to basic_nack, e: %s' % e, flush = True)
             finally:
                 with mutex:
                     msg_table.pop(message_key(json_body), None)
@@ -55,12 +55,12 @@ def thread_target(ch, delivery_tag, properties, json_body):
             report_unit = config['report_unit']
             now_progress = int(d['downloaded_bytes'])
             if now_progress - last_progress >= report_unit:
-                print('[progress %dK / %dK]: %s, %s' % (int(now_progress / 1024), int(d.get('total_bytes', -1) / 1024), d['filename'], json_body['url']))
-            last_progress = now_progress
+                print('[progress %dK / %dK]: %s, %s' % (int(now_progress / 1024), int(d.get('total_bytes', -1) / 1024), d['filename'], json_body['url']), flush = True)
+                last_progress = now_progress
         else:
-            print('Other event: %s' % d)
+            print('Other event: %s' % d, flush = True)
 
-    print(" [x] Received %r" % json_body)
+    print(" [x] Received %r" % json_body, flush = True)
     ydl_opts = {
             'verbose': True,
             'logger': MyLogger(),
@@ -76,18 +76,18 @@ def thread_target(ch, delivery_tag, properties, json_body):
             }
     if os.environ.get('proxy') is not None:
         ydl_opts['proxy'] = os.environ['proxy']
-    print('ydl_opts: %s' % ydl_opts)
+    print('ydl_opts: %s' % ydl_opts, flush = True)
     ydl_opts.update(json_body)
 
     try:
         ydl = youtube_dl.YoutubeDL(params = ydl_opts)
         ydl.download([json_body['url']])
     except BaseException as e:
-        print("Download failed error: %s" % e)
+        print("Download failed error: %s" % e, flush = True)
         try:
             ch.basic_nack(delivery_tag = delivery_tag)
         except BaseException as e:
-            print("Failed to basic_nack, e: %s" % e)
+            print("Failed to basic_nack, e: %s" % e, flush = True)
         finally:
             with mutex:
                 msg_table.pop(message_key(json_body), None)
@@ -124,13 +124,13 @@ def exit_gracefully(self, signum, frame):
             try:
                 channel.basic_nack(delivery_tag = v)
             except BaseException as e:
-                print('Failed to basic_nack, e: %s' % e)
+                print('Failed to basic_nack, e: %s' % e, flush = True)
 
 
 signal.signal(signal.SIGINT, exit_gracefully)
 signal.signal(signal.SIGTERM, exit_gracefully)
 
-print(' [*] Waiting for messages. To exit press CTRL+C')
+print(' [*] Waiting for messages. To exit press CTRL+C', flush = True)
 while True:
     try:
         connection = pika.BlockingConnection(parameters = pika.ConnectionParameters(host = rabbitmq_addr))
@@ -140,5 +140,5 @@ while True:
         channel.basic_consume(queue = 'job', auto_ack = False, on_message_callback = callback)
         channel.start_consuming()
     except BaseException as e:
-        print('main loop error of type %s: %s' % (type(e), e))
+        print('main loop error of type %s: %s' % (type(e), e), flush = True)
         time.sleep(config['retry_wait'])
