@@ -6,6 +6,7 @@ import json
 import threading
 import signal
 import time
+import functools
 
 os.chdir('/app/lib')
 
@@ -19,7 +20,24 @@ if rabbitmq_addr is None:
 
 
 msg_table = {}
-mutex = threading.RLock()
+
+def safe_ack(ch, delivery_tag, json_body):
+    try:
+        ch.basic_ack(delivery_tag = delivery_tag)
+        print('Did basic_ack', flush = True)
+    except BaseException as e:
+        print('Failed to basic_ack, e: %s' % e, flush = True)
+    finally:
+        msg_table.pop(message_key(json_body), None)
+
+def safe_nack(ch, delivery_tag, json_body):
+    try:
+        ch.basic_nack(delivery_tag = delivery_tag)
+        print('Did basic_nack', flush = True)
+    except BaseException as e:
+        print('Failed to basic_nack, e: %s' % e, flush = True)
+    finally:
+        msg_table.pop(message_key(json_body), None)
 
 def thread_target(ch, delivery_tag, properties, json_body):
     class MyLogger(object):
@@ -35,22 +53,10 @@ def thread_target(ch, delivery_tag, properties, json_body):
         nonlocal last_progress
         if d['status'] == 'finished':
             print('Done downloading, now converting ...', flush = True)
-            try:
-                ch.basic_ack(delivery_tag = delivery_tag)
-            except BaseException as e:
-                print('Failed to basic_ack, e: %s' % e, flush = True)
-            finally:
-                with mutex:
-                    msg_table.pop(message_key(json_body), None)
+            connection.add_callback_threadsafe(functools.partial(safe_ack, ch, delivery_tag, json_body))
         elif d['status'] == 'error':
             print('Failed downloading: %s' % d, True)
-            try:
-                ch.basic_nack(delivery_tag = delivery_tag)
-            except BaseException as e:
-                print('Failed to basic_nack, e: %s' % e, flush = True)
-            finally:
-                with mutex:
-                    msg_table.pop(message_key(json_body), None)
+            connection.add_callback_threadsafe(functools.partial(safe_nack, ch, delivery_tag, json_body))
         elif d['status'] == 'downloading':
             report_unit = config['report_unit']
             now_progress = int(d['downloaded_bytes'])
@@ -84,19 +90,11 @@ def thread_target(ch, delivery_tag, properties, json_body):
         ydl.download([json_body['url']])
     except BaseException as e:
         print("Download failed error: %s" % e, flush = True)
-        try:
-            ch.basic_nack(delivery_tag = delivery_tag)
-        except BaseException as e:
-            print("Failed to basic_nack, e: %s" % e, flush = True)
-        finally:
-            with mutex:
-                msg_table.pop(message_key(json_body), None)
-
+        connection.add_callback_threadsafe(functools.partial(safe_nack, ch, delivery_tag, json_body))
 
 def callback(ch, method, properties, body):
     json_body = json.loads(body)
     handle_message(ch, method.delivery_tag, properties, json_body)
-
 
 # message management
 def message_key(msg):
@@ -110,29 +108,27 @@ def handle_message(ch, delivery_tag, properties, json_body):
     msg_key = message_key(json_body)
     if msg_key is None:
         return
-    with mutex:
-        if msg_table.get(msg_key) is not None:
-            return
-        msg_table[msg_key] = delivery_tag
-        th = threading.Thread(target = thread_target, args = (ch, delivery_tag, properties, json_body))
-        th.start()
+    if msg_table.get(msg_key) is not None:
+        return
+    msg_table[msg_key] = delivery_tag
+    th = threading.Thread(target = thread_target, args = (ch, delivery_tag, properties, json_body))
+    th.start()
 
 
-def exit_gracefully(self, signum, frame):
-    with mutex:
-        for k, v in msg_table.items():
-            try:
-                channel.basic_nack(delivery_tag = v)
-            except BaseException as e:
-                print('Failed to basic_nack, e: %s' % e, flush = True)
+def stop_consuming():
+    for k, v in msg_table.items():
+        channel.basic_nack(delivery_tag = v)
+    channel.stop_consuming()
 
+def exit_gracefully(signum, frame):
+    connection.add_callback_threadsafe(stop_consuming)
 
 signal.signal(signal.SIGINT, exit_gracefully)
 signal.signal(signal.SIGTERM, exit_gracefully)
 
-print(' [*] Waiting for messages. To exit press CTRL+C', flush = True)
 while True:
     try:
+        print(' [*] Waiting for messages. To exit press CTRL+C', flush = True)
         connection = pika.BlockingConnection(parameters = pika.ConnectionParameters(host = rabbitmq_addr))
         channel = connection.channel()
         channel.basic_qos(prefetch_count=config['prefetch_count'])
