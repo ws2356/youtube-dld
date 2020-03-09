@@ -18,24 +18,28 @@ rabbitmq_addr = os.environ['rabbitmq_addr']
 if rabbitmq_addr is None:
     raise 'missing environ rabbitmq_addr'
 
-
 msg_table = {}
+
+def debug_print(*args, **kwargs):
+    s = '[tid = %s] %s' % (threading.currentThread().ident(), args[0])
+    print(s, *args[1:], **kwargs)
+
 
 def safe_ack(ch, delivery_tag, json_body):
     try:
         ch.basic_ack(delivery_tag = delivery_tag)
-        print('Did basic_ack', flush = True)
+        debug_print('Did basic_ack', flush = True)
     except BaseException as e:
-        print('Failed to basic_ack, e: %s' % e, flush = True)
+        debug_print('Failed to basic_ack, e: %s' % e, flush = True)
     finally:
         msg_table.pop(message_key(json_body), None)
 
 def safe_nack(ch, delivery_tag, json_body):
     try:
         ch.basic_nack(delivery_tag = delivery_tag)
-        print('Did basic_nack', flush = True)
+        debug_print('Did basic_nack', flush = True)
     except BaseException as e:
-        print('Failed to basic_nack, e: %s' % e, flush = True)
+        debug_print('Failed to basic_nack, e: %s' % e, flush = True)
     finally:
         msg_table.pop(message_key(json_body), None)
 
@@ -46,27 +50,27 @@ def thread_target(ch, delivery_tag, properties, json_body):
         def warning(self, msg):
             pass
         def error(self, msg):
-            print(msg, flush = True)
+            debug_print(msg, flush = True)
 
     last_progress = 0
     def my_hook(d):
         nonlocal last_progress
         if d['status'] == 'finished':
-            print('Done downloading, now converting ...', flush = True)
+            debug_print('Done downloading, now converting ...', flush = True)
             connection.add_callback_threadsafe(functools.partial(safe_ack, ch, delivery_tag, json_body))
         elif d['status'] == 'error':
-            print('Failed downloading: %s' % d, True)
+            debug_print('Failed downloading: %s' % d, True)
             connection.add_callback_threadsafe(functools.partial(safe_nack, ch, delivery_tag, json_body))
         elif d['status'] == 'downloading':
             report_unit = config['report_unit']
             now_progress = int(d['downloaded_bytes'])
             if now_progress - last_progress >= report_unit:
-                print('[progress %dK / %dK]: %s, %s' % (int(now_progress / 1024), int(d.get('total_bytes', -1) / 1024), d['filename'], json_body['url']), flush = True)
+                debug_print('[progress %dK / %dK]: %s, %s' % (int(now_progress / 1024), int(d.get('total_bytes', -1) / 1024), d['filename'], json_body['url']), flush = True)
                 last_progress = now_progress
         else:
-            print('Other event: %s' % d, flush = True)
+            debug_print('Other event: %s' % d, flush = True)
 
-    print(" [x] Received %r" % json_body, flush = True)
+    debug_print(" [x] Received %r" % json_body, flush = True)
     ydl_opts = {
             'verbose': True,
             'logger': MyLogger(),
@@ -82,14 +86,14 @@ def thread_target(ch, delivery_tag, properties, json_body):
             }
     if os.environ.get('proxy') is not None:
         ydl_opts['proxy'] = os.environ['proxy']
-    print('ydl_opts: %s' % ydl_opts, flush = True)
+    debug_print('ydl_opts: %s' % ydl_opts, flush = True)
     ydl_opts.update(json_body)
 
     try:
         ydl = youtube_dl.YoutubeDL(params = ydl_opts)
         ydl.download([json_body['url']])
     except BaseException as e:
-        print("Download failed error: %s" % e, flush = True)
+        debug_print("Download failed error: %s" % e, flush = True)
         connection.add_callback_threadsafe(functools.partial(safe_nack, ch, delivery_tag, json_body))
 
 def callback(ch, method, properties, body):
@@ -128,7 +132,7 @@ signal.signal(signal.SIGTERM, exit_gracefully)
 
 while True:
     try:
-        print(' [*] Waiting for messages. To exit press CTRL+C', flush = True)
+        debug_print(' [*] Waiting for messages. To exit press CTRL+C', flush = True)
         connection = pika.BlockingConnection(parameters = pika.ConnectionParameters(host = rabbitmq_addr))
         channel = connection.channel()
         channel.basic_qos(prefetch_count=config['prefetch_count'])
@@ -136,5 +140,5 @@ while True:
         channel.basic_consume(queue = 'job', auto_ack = False, on_message_callback = callback)
         channel.start_consuming()
     except BaseException as e:
-        print('main loop error of type %s: %s' % (type(e), e), flush = True)
+        debug_print('main loop error of type %s: %s' % (type(e), e), flush = True)
         time.sleep(config['retry_wait'])
