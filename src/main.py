@@ -21,7 +21,7 @@ if rabbitmq_addr is None:
 msg_table = {}
 
 def debug_print(*args, **kwargs):
-    s = '[tid = %s] %s' % (threading.currentThread().ident(), args[0])
+    s = '[tid = %s] %s' % (threading.currentThread().ident, args[0])
     print(s, *args[1:], **kwargs)
 
 
