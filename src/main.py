@@ -89,12 +89,18 @@ def thread_target(ch, delivery_tag, properties, json_body):
     debug_print('ydl_opts: %s' % ydl_opts, flush = True)
     ydl_opts.update(json_body)
 
-    try:
-        ydl = youtube_dl.YoutubeDL(params = ydl_opts)
-        ydl.download([json_body['url']])
-    except BaseException as e:
-        debug_print("Download failed error: %s" % e, flush = True)
-        connection.add_callback_threadsafe(functools.partial(safe_nack, ch, delivery_tag, json_body))
+    retry_count = 10
+    while retry_count > 0:
+        try:
+            ydl = youtube_dl.YoutubeDL(params = ydl_opts)
+            ydl.download([json_body['url']])
+            return
+        except BaseException as e:
+            debug_print("Download failed error: %s" % e, flush = True)
+            time.sleep(config.get('download_retry_wait', 30))
+            retry_count -= 1
+    connection.add_callback_threadsafe(functools.partial(safe_nack, ch, delivery_tag, json_body))
+
 
 def callback(ch, method, properties, body):
     json_body = json.loads(body)
