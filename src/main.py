@@ -31,6 +31,12 @@ def safe_ack(ch, delivery_tag, json_body):
         debug_print('Did basic_ack', flush = True)
     except BaseException as e:
         debug_print('Failed to basic_ack, e: %s' % e, flush = True)
+        try:
+            ch.stop_consuming()
+        except BaseException as e2:
+            debug_print('Failed to stop_consuming: %s' % e2)
+        finally:
+            ch.connection.close()
     finally:
         msg_table.pop(message_key(json_body), None)
 
@@ -40,6 +46,12 @@ def safe_nack(ch, delivery_tag, json_body):
         debug_print('Did basic_nack', flush = True)
     except BaseException as e:
         debug_print('Failed to basic_nack, e: %s' % e, flush = True)
+        try:
+            ch.stop_consuming()
+        except BaseException as e2:
+            debug_print('Failed to stop_consuming: %s' % e2)
+        finally:
+            ch.connection.close()
     finally:
         msg_table.pop(message_key(json_body), None)
 
@@ -125,13 +137,21 @@ def handle_message(ch, delivery_tag, properties, json_body):
     th.start()
 
 
-def stop_consuming():
+def stop_all():
     for k, v in msg_table.items():
-        channel.basic_nack(delivery_tag = v)
-    channel.stop_consuming()
+        try:
+            channel.basic_nack(delivery_tag = v)
+        except Exception as e:
+            debug_print('Failed to basic_nack: ' % e)
+    try:
+        channel.stop_consuming()
+    except Exception as e:
+        debug_print('Failed to start_consuming: %s' % e)
+    finally:
+        connection.close()
 
 def exit_gracefully(signum, frame):
-    connection.add_callback_threadsafe(stop_consuming)
+    connection.add_callback_threadsafe(stop_all)
 
 signal.signal(signal.SIGINT, exit_gracefully)
 signal.signal(signal.SIGTERM, exit_gracefully)
