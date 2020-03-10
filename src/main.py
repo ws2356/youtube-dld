@@ -156,6 +156,12 @@ def exit_gracefully(signum, frame):
 signal.signal(signal.SIGINT, exit_gracefully)
 signal.signal(signal.SIGTERM, exit_gracefully)
 
+def health_report_thread():
+    for th in threading.enumerate():
+        print(th)
+
+threading.Thread(target = health_report_thread).start()
+
 while True:
     try:
         debug_print(' [*] Waiting for messages. To exit press CTRL+C', flush = True)
