@@ -163,7 +163,9 @@ def health_report_thread():
         print('=============stack trace report=============', flush = True)
         for ident, frame in sys._current_frames().items():
             print('-----------------[ident = %s] -------------------' % ident, flush = True)
-            traceback.print_stack(frame)
+            extracted_list = traceback.extract_stack(frame)
+            for item in traceback.StackSummary.from_list(extracted_list).format():
+                print(item, end = "", flush = True)
         print('===================================', flush = True)
         time.sleep(config.get('health_report_interval', 10))
 
