@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import os
+import sys
 import pika
 import youtube_dl
 import json
@@ -7,6 +8,7 @@ import threading
 import signal
 import time
 import functools
+import traceback
 
 os.chdir('/app/lib')
 
@@ -157,8 +159,10 @@ signal.signal(signal.SIGINT, exit_gracefully)
 signal.signal(signal.SIGTERM, exit_gracefully)
 
 def health_report_thread():
-    for th in threading.enumerate():
-        print(th)
+    while True:
+        for ident, frame in sys._current_frames().items():
+            traceback.print_stack(frame)
+        time.sleep(config.get('health_report_interval', 10))
 
 threading.Thread(target = health_report_thread).start()
 
