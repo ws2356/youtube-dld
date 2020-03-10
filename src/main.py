@@ -160,11 +160,11 @@ signal.signal(signal.SIGTERM, exit_gracefully)
 
 def health_report_thread():
     while True:
-        print('stack trace report')
-        print('===================================')
+        print('=============stack trace report=============', flush = True)
         for ident, frame in sys._current_frames().items():
+            print('-----------------[ident = %s] -------------------' % ident, flush = True)
             traceback.print_stack(frame)
-            print('------------------------------------')
+        print('===================================', flush = True)
         time.sleep(config.get('health_report_interval', 10))
 
 threading.Thread(target = health_report_thread).start()
